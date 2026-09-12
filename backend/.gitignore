@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+uploads/*
+!uploads/.gitkeep
+.pytest_cache/
+.ipynb_checkpoints/

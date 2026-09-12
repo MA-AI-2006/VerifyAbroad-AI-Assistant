@@ -1,0 +1,82 @@
+"""VerifyAbroad-AI FastAPI application entrypoint."""
+import logging
+from contextlib import asynccontextmanager
+
+import httpx
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+
+from config import settings
+from database.session import init_db, engine
+from api import investigation, evidence, verification, reports
+from research.hipo import HIPO_URL
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.auto_create_db and not settings.is_production:
+        await init_db()
+        logger.info("Database tables auto-created for development")
+    elif settings.is_production and settings.auto_create_db:
+        logger.warning("AUTO_CREATE_DB is ignored in production; run Alembic migrations")
+    yield
+    await engine.dispose()
+
+
+app = FastAPI(title="VerifyAbroad-AI", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+app.include_router(investigation.router)
+app.include_router(evidence.router)
+app.include_router(verification.router)
+app.include_router(reports.router)
+
+
+@app.get("/health", tags=["health"])
+async def health():
+    """Dependency health: DB + Hipo network check + provider configuration."""
+    checks: dict[str, dict] = {}
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = {"status": "ok"}
+    except Exception as exc:
+        logger.exception("Health check database failure")
+        checks["database"] = {"status": "error", "detail": str(exc)}
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.free_source_timeout_seconds) as client:
+            response = await client.get(HIPO_URL, params={"name": "University of Oxford"})
+            response.raise_for_status()
+        checks["hipo"] = {"status": "ok"}
+    except Exception as exc:
+        logger.exception("Health check Hipo failure")
+        checks["hipo"] = {"status": "error", "detail": str(exc)}
+
+    providers = {
+        "gemini": bool(settings.gemini_api_key),
+        "groq": bool(settings.groq_api_key),
+        "tavily": bool(settings.tavily_api_key),
+        "opensanctions": bool(settings.opensanctions_api_key),
+        "supabase_storage": bool(settings.storage_backend == "supabase" and settings.supabase_url and settings.supabase_service_key),
+    }
+    checks["providers"] = {"status": "configured", "keys": providers}
+
+    required_ok = checks["database"]["status"] == "ok" and checks["hipo"]["status"] == "ok"
+    body = {"status": "ok" if required_ok else "degraded", "checks": checks}
+    return JSONResponse(status_code=200 if required_ok else 503, content=body)
