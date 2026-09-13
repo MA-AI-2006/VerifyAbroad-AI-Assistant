@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Loader2, PanelRightOpen, RotateCcw, Sparkles } from "lucide-react";
+import { AlertCircle, Loader2, PanelRightOpen, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 
 import type { InvestigationRecord, Language } from "@/types";
 import { cn } from "@/utils/ui";
 import { useInvestigation } from "@/hooks/useInvestigation";
-import { backendMode, demo, starterPrompts } from "@/services/api";
+import { demo, starterPrompts } from "@/services/api";
 import { Composer } from "@/components/Chat/Composer";
 import { MessageBubble } from "@/components/Chat/MessageBubble";
 import { ProgressTrace, pendingSteps } from "@/components/Investigation/ProgressTrace";
@@ -115,6 +115,30 @@ export function ChatView({ initialInvestigation }: { initialInvestigation?: Inve
                 <Sparkles className="size-3.5" aria-hidden="true" />
                 Demo case
               </button>
+              {investigation.verification.available ? (
+                <button
+                  type="button"
+                  onClick={() => void investigation.runVerification(investigation.verification.needsReverification)}
+                  disabled={investigation.isThinking || investigation.verification.status === "running"}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60",
+                    investigation.verification.needsReverification
+                      ? "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                      : "border border-navy-900 bg-navy-900 text-white hover:bg-navy-800",
+                  )}
+                >
+                  {investigation.verification.status === "running" ? (
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ShieldCheck className="size-3.5" aria-hidden="true" />
+                  )}
+                  {investigation.verification.status === "running"
+                    ? "Verifying…"
+                    : investigation.verification.needsReverification
+                      ? "Re-run verification"
+                      : "Run verification"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={investigation.reset}
@@ -134,6 +158,26 @@ export function ChatView({ initialInvestigation }: { initialInvestigation?: Inve
             </div>
           </div>
         </header>
+
+        {investigation.verification.available && investigation.verification.status !== "idle" ? (
+          <p
+            className={cn(
+              "border-b px-4 py-2 text-[11px] font-medium leading-relaxed sm:px-5",
+              investigation.verification.status === "error"
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-[color:var(--color-hairline)] bg-white text-navy-600",
+            )}
+            role="status"
+          >
+            {investigation.verification.status === "running"
+              ? "Checking university recognition, consultant registration, payment channel and document claims…"
+              : investigation.verification.status === "error"
+                ? (investigation.verification.message ?? "Verification did not finish. You can try again.")
+                : `Last verification: risk indicator ${investigation.verification.riskScore ?? "—"}/100${
+                    investigation.verification.displayStatus ? ` · ${investigation.verification.displayStatus}` : ""
+                  }`}
+          </p>
+        ) : null}
 
         <div
           ref={scrollRef}
@@ -253,6 +297,7 @@ export function ChatView({ initialInvestigation }: { initialInvestigation?: Inve
             investigationId={investigation.investigationId}
             result={result}
             onTurn={investigation.appendTurn}
+            onContextEdited={investigation.markNeedsReverification}
             onSubmitFreeText={(text) => void investigation.send(text)}
           />
 
@@ -297,7 +342,13 @@ export function ChatView({ initialInvestigation }: { initialInvestigation?: Inve
           </section>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="brand">{backendMode === "internal_engine" ? "Demo mode" : "Live backend"}</Badge>
+            <Badge tone="brand">
+              {investigation.mode === "external_backend"
+                ? "Live backend"
+                : investigation.mode === "internal_engine"
+                  ? "Built-in engine"
+                  : "Connecting…"}
+            </Badge>
             <span className="text-[11px] leading-relaxed text-navy-500">
               Sample verification dataset — community reports shown are demo data.
             </span>

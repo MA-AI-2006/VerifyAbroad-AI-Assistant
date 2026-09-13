@@ -9,6 +9,11 @@ RULES = {
     "personal_payment_account": 20,
     "institution_not_recognized": 25,
     "payment_process_mismatch": 25,
+    # A contradicted payment demand is the highest-stakes finding in this whole
+    # product, so it floors the score at MEDIUM even when nothing else was
+    # checkable yet (no documents, no registry hit) — the student must never see
+    # "Low risk" while an official source contradicts what they were told to pay.
+    "payment_contradicted": 30,
     "contradicted_program": 30,
     "contradictory_document": 20,
     "agent_banned_or_sanctioned": 35,
@@ -18,6 +23,21 @@ RISK_DISPLAY = {
     "HIGH": ("SUSPICIOUS", "🟠"),
     "VERY_HIGH": ("HIGH_RISK", "🔴"),
 }
+
+# Claim phrases. The student writes in English, Roman Urdu or Urdu, so both word
+# orders and the transliterated spellings have to be covered: "visa guaranteed
+# hai" and "guaranteed visa" are the same promise, and "aaj hi … warna seat chali
+# jayegi" is the same pressure as "pay today or lose your seat".
+_VISA_GUARANTEE_RE = re.compile(
+    r"visa[^.\n]{0,24}guarante|guarante[^.\n]{0,24}visa|100\s*%\s*visa|visa\s*100\s*%"
+    r"|visa\s*(?:pakka|confirm|sure)",
+    re.IGNORECASE,
+)
+_URGENCY_RE = re.compile(
+    r"urgent|urgency|within\s*24|24\s*hours?|by\s*today|today\s*hi|aaj\s*hi|abhi\s*bhej"
+    r"|jaldi|last\s*(?:seat|batch)|limited\s*seats?|seat\s*(?:chali|cancel)|expiry|deadline",
+    re.IGNORECASE,
+)
 
 _PAYMENT_ACCOUNT_PATTERNS = (
     "jazzcash", "easypaisa", "sadapay", "nayapay", "upaisa", "personal account",
@@ -40,6 +60,8 @@ def compute_risk_score(records: list[EvidenceRecord], domain_statuses: dict[str,
         score += RULES["unverified_agent"]
 
     payment_status = domain_statuses.get("payment", (None,))[0]
+    if payment_status == "CONTRADICTED":
+        score += RULES["payment_contradicted"]
     if payment_status == "CONTRADICTED" and any(
         _contains((r.claim + " " + (r.detail or "")).lower(), _PAYMENT_ACCOUNT_PATTERNS)
         for r in records if r.domain.value == "payment"
@@ -47,9 +69,11 @@ def compute_risk_score(records: list[EvidenceRecord], domain_statuses: dict[str,
         score += RULES["personal_payment_account"]
 
     claim_texts = " ".join(r.claim.lower() + " " + (r.detail or "").lower() for r in records)
-    if _contains(claim_texts, ("visa guarantee", "100% visa", "100 percent visa")):
+    if _VISA_GUARANTEE_RE.search(claim_texts):
         score += RULES["visa_guarantee_claim"]
-    if _contains(claim_texts, ("urgent", "urgency", "artificial urgency", "short/urgent payment deadline")):
+    if _URGENCY_RE.search(claim_texts) or _contains(
+        claim_texts, ("artificial urgency", "short/urgent payment deadline")
+    ):
         score += RULES["urgent_payment"]
 
     if any(

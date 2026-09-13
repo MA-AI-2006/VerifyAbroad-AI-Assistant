@@ -1,36 +1,40 @@
 import { NextResponse } from "next/server";
 
-import type { Language } from "@/types";
-import { backendEnabled, backendGetResults, backendRunVerification } from "@/server/backendClient";
-import { adaptReport } from "@/server/backendAdapter";
+import { currentMode, runVerification, toResponse } from "@/server/dataSource";
 
 export const dynamic = "force-dynamic";
+/** Vercel's default serverless budget is shorter than a live verification run. */
+export const maxDuration = 60;
+
+
+interface VerifyBody {
+  force?: boolean;
+}
 
 /**
- * Runs the full institution + agent + payment verification pipeline on the
- * FastAPI backend (backend/api/verification.py: POST /investigations/{id}/verify)
- * and returns the resulting risk report.
+ * Runs the institution + agent + payment + document pipeline on the FastAPI
+ * backend (backend/api/verification.py) and returns the resulting report.
  *
- * There is no internal-engine equivalent of this endpoint: the deterministic
- * engine scores risk continuously as part of every chat turn instead of as a
- * separate step, so this route only does anything when BACKEND_URL is set.
+ * `force: true` re-runs instead of returning the stored report — used after a
+ * profile edit, which marks the previous verdict as needing re-verification.
+ * There is no internal-engine equivalent: that engine scores every message.
  */
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  if (!backendEnabled()) {
-    return NextResponse.json(
-      { error: "No external backend is configured. Set BACKEND_URL to enable a separate verification step." },
-      { status: 501 },
-    );
-  }
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
-    await backendRunVerification(id);
-    const data = await backendGetResults(id);
-    const language: Language = "roman_urdu";
-    const result = data.report ? adaptReport(id, language, data.report) : null;
-    return NextResponse.json({ status: data.status, result, mode: "external_backend" });
+    const body = (await request.json().catch(() => ({}))) as VerifyBody;
+    const outcome = await runVerification(id, Boolean(body.force));
+    return NextResponse.json({
+      status: outcome.status,
+      result: outcome.result,
+      run: outcome.run,
+      investigation: outcome.investigation,
+      mode: await currentMode(),
+    });
   } catch (error) {
-    console.error("verification run failed", error);
-    return NextResponse.json({ error: "Verification failed" }, { status: 502 });
+    return toResponse(error, "Verification failed");
   }
 }

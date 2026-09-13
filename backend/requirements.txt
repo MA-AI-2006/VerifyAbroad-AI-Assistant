@@ -1,3 +1,6 @@
+# VerifyAbroad-AI backend — runtime + test dependencies.
+# Pinned to compatible ranges so Render's build is reproducible but can still
+# pick up patches. Dev-only tools (uvicorn --reload etc.) are already included.
 fastapi>=0.141.1,<0.142.0
 uvicorn[standard]>=0.52.4,<0.53.0
 
@@ -15,13 +18,17 @@ numpy>=1.26.4,<3.0
 python-multipart>=0.0.20,<1.0
 Pillow>=12.0.0,<13.0
 python-dateutil>=2.9.0,<3.0
+
+# One PDF reader, pinned once (it was duplicated before, which made
+# `pip install` resolve it twice during Render builds).
 PyMuPDF>=1.26.0,<2.0
 
+# Providers. `supabase` is only imported when STORAGE_BACKEND=supabase, but it is
+# kept here so switching evidence storage on does not need a new build.
 supabase==2.31.0
 google-genai==2.22.0
 groq==1.7.0
 tavily-python==0.8.1
 
 pytest>=9.0,<10.0
-
-PyMuPDF>=1.24,<2.0
+greenlet>=3.0,<4.0

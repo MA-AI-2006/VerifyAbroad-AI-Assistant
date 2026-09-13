@@ -38,7 +38,14 @@ async def normalize_source_result(domain: Domain, claim: str, source: str, sourc
             raw_response=raw_data if isinstance(raw_data, dict) else {"raw_text": raw_data},
         )
     except Exception as exc:
-        logger.error("Evidence normalization failed for source=%s claim=%s: %s", source, claim, exc, exc_info=True)
+        from agents.llm_client import LLMUnavailable
+
+        if isinstance(exc, LLMUnavailable):
+            # Expected on a keyless deployment: the raw source result is kept and
+            # marked unverifiable rather than logging a traceback per record.
+            logger.debug("Evidence normalization skipped: %s", exc)
+        else:
+            logger.error("Evidence normalization failed for source=%s claim=%s: %s", source, claim, exc, exc_info=True)
         return EvidenceRecord(
             domain=domain,
             claim=claim,

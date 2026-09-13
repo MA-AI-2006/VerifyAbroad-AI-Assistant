@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 
-import type { ChatAttachment, DegreeLevel, FundingType, InvestigationRecord, Language } from "@/types";
-import { startNewInvestigation } from "@/server/engine/run";
-import { getStudentKey } from "@/server/session";
-import { getInvestigation } from "@/server/repositories/investigations";
-import { backendEnabled, backendCreateInvestigation } from "@/server/backendClient";
-import { adaptAssistantMessage, adaptContext, adaptStudentMessage } from "@/server/backendAdapter";
+import type {
+  ChatAttachment,
+  DegreeLevel,
+  FundingType,
+  Language,
+} from "@/types";
+import {
+  currentMode,
+  startInvestigation,
+  toResponse,
+} from "@/server/dataSource";
 
 export const dynamic = "force-dynamic";
+/** Vercel's default serverless budget is shorter than a live verification run. */
+export const maxDuration = 60;
+
 
 interface StartBody {
   message?: string;
@@ -17,58 +25,33 @@ interface StartBody {
   attachments?: ChatAttachment[];
 }
 
+/**
+ * Starts an investigation.
+ *
+ * `BACKEND_URL` set  -> the FastAPI service owns the case (backend/api/investigation.py).
+ * unset              -> the internal deterministic engine, unchanged.
+ */
 export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => ({}))) as StartBody;
-    const language: Language = body.language ?? "roman_urdu";
-    const message = body.message ?? "";
-
-    // When BACKEND_URL is configured, the FastAPI service owns the investigation
-    // (see backend/api/investigation.py: POST /investigations). Otherwise this
-    // falls through, unchanged, to the internal deterministic engine below.
-    if (backendEnabled()) {
-      const created = await backendCreateInvestigation(message || "I need help verifying a study abroad offer.");
-      const studentMessage = adaptStudentMessage(message);
-      const assistantMessage = adaptAssistantMessage(created.assistant_message, null);
-      const now = new Date().toISOString();
-      const investigation: InvestigationRecord = {
-        id: created.investigation_id,
-        title: created.structured_case.university || message.slice(0, 80) || "New investigation",
-        language,
-        status: created.ready_for_verification ? "assessed" : "gathering",
-        overall_risk: "pending_more_info",
-        context: adaptContext(created.structured_case),
-        messages: [studentMessage, assistantMessage],
-        latest_result: null,
-        created_at: now,
-        updated_at: now,
-      };
-      return NextResponse.json({
-        investigation_id: created.investigation_id,
-        investigation,
-        first_turn: { assistantMessage, result: null },
-        mode: "external_backend",
-      });
-    }
-
-    const studentKey = await getStudentKey();
-    const started = await startNewInvestigation({
-      studentKey,
-      language,
-      firstMessage: message,
+    const started = await startInvestigation({
+      message: body.message ?? "",
+      language: body.language ?? "roman_urdu",
+      degreeLevel: body.degree_level ?? null,
+      fundingType: body.funding_type ?? null,
       attachments: body.attachments ?? [],
     });
 
-    const investigation = await getInvestigation(started.investigationId);
-
     return NextResponse.json({
-      investigation_id: String(started.investigationId),
-      investigation,
-      first_turn: started.turn,
-      mode: "internal_engine",
+      investigation_id: started.investigationId,
+      investigation: started.investigation,
+      first_turn: {
+        assistantMessage: started.assistantMessage,
+        result: started.result,
+      },
+      mode: await currentMode(),
     });
   } catch (error) {
-    console.error("investigate failed", error);
-    return NextResponse.json({ error: "Failed to start investigation" }, { status: 500 });
+    return toResponse(error, "Failed to start investigation");
   }
 }

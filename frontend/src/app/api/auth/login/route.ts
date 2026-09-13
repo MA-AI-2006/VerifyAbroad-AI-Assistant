@@ -1,48 +1,31 @@
 import { NextResponse } from "next/server";
-import { scryptSync, timingSafeEqual } from "node:crypto";
 
-import { findStudentByEmail } from "@/server/repositories/investigations";
+import { signIn, toResponse } from "@/server/dataSource";
 import { setAuthCookie } from "@/server/session";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Signs in and stores the returned account key in a same-origin httpOnly cookie.
+ * The key — not the password — is what the Next server forwards to the backend,
+ * so no credential or cookie ever has to cross the Vercel/Render origin split.
+ */
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
-  const email = (body.email ?? "").trim().toLowerCase();
-  const password = body.password ?? "";
+  try {
+    const body = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
+    const email = (body.email ?? "").trim().toLowerCase();
+    const password = body.password ?? "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: "Please enter a valid email address." }, { status: 400 });
+    }
+    if (!password) {
+      return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+    }
 
-  if (!email || !password) {
-    return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+    const result = await signIn({ email, password });
+    await setAuthCookie(result.studentKey);
+    return NextResponse.json({ account: result.account });
+  } catch (error) {
+    return toResponse(error, "Could not sign you in");
   }
-
-  const account = await findStudentByEmail(email);
-  if (!account?.passwordHash) {
-    return NextResponse.json({ error: "Email or password is incorrect." }, { status: 401 });
-  }
-
-  const [salt, stored] = account.passwordHash.split(":");
-  if (!salt || !stored) {
-    return NextResponse.json({ error: "Email or password is incorrect." }, { status: 401 });
-  }
-
-  const derived = scryptSync(password, salt, 64);
-  const expected = Buffer.from(stored, "hex");
-  const valid = derived.length === expected.length && timingSafeEqual(derived, expected);
-
-  if (!valid) {
-    return NextResponse.json({ error: "Email or password is incorrect." }, { status: 401 });
-  }
-
-  await setAuthCookie(account.key);
-
-  return NextResponse.json({
-    account: {
-      name: account.name,
-      email: account.email,
-      preferred_language: account.preferredLanguage,
-      degree_level: account.degreeLevel,
-      target_countries: account.targetCountries,
-      funding_preference: account.fundingPreference,
-    },
-  });
 }

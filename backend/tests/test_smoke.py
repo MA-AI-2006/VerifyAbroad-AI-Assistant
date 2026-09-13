@@ -90,7 +90,10 @@ def test_all_declared_rule_wirings():
     ]
     statuses = aggregate_all(records)
     score, _ = compute_risk_score(records, statuses)
-    assert score == 55
+    # 55 from the contradicted document/program/payment-rule wiring above, plus the
+    # 30 payment_contradicted floor: a contradicted payment demand can never read
+    # as low risk, even when nothing else about the case was checkable.
+    assert score == 85, score
 
 
 def main():

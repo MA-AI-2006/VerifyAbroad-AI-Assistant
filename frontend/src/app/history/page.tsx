@@ -2,8 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ArrowRight, History as HistoryIcon, MessageSquareText } from "lucide-react";
 
-import { listInvestigations } from "@/server/repositories/investigations";
-import { getStudentKey } from "@/server/session";
+import { loadHistory } from "@/server/dataSource";
 import { Card, LinkButton, RiskPill } from "@/components/ui/primitives";
 import { relativeDate } from "@/utils/ui";
 
@@ -14,8 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default async function HistoryPage() {
-  const studentKey = await getStudentKey();
-  const investigations = await listInvestigations(studentKey).catch(() => []);
+  const investigations = await loadHistory().catch(() => []);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:py-12">

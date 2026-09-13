@@ -38,7 +38,7 @@ def test_full_mocked_pipeline(tmp_path, monkeypatch):
             async with SessionLocal() as session:
                 yield session
 
-        async def fake_investigator(history, current_case):
+        async def fake_investigator(history, current_case, *, language="roman_urdu"):
             user_messages = [m["content"] for m in history if m["role"] == "user"]
             if len(user_messages) == 1:
                 case = current_case.model_copy(update={"country": "United Kingdom"})
@@ -87,7 +87,7 @@ def test_full_mocked_pipeline(tmp_path, monkeypatch):
                 ),
             ]
 
-        def make_final_report(structured_case, evidence_records, domain_statuses, risk_score, risk_level):
+        async def make_final_report(structured_case, evidence_records, domain_statuses, risk_score, risk_level):
             from agents.final_analyst import assemble_domains
             return FinalReport(
                 risk_level=risk_level, risk_score=risk_score,
@@ -114,27 +114,40 @@ def test_full_mocked_pipeline(tmp_path, monkeypatch):
         try:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                first = await client.post("/investigations", json={"initial_message": "I have an agent for studying abroad."})
+                headers = {"X-Student-Key": "test_student"}
+                first = await client.post(
+                    "/investigations",
+                    json={"initial_message": "I have an agent for studying abroad."},
+                    headers=headers,
+                )
                 assert first.status_code == 200
                 assert first.json()["ready_for_verification"] is False
                 assert first.json()["assistant_message"] == "Which university are you applying to?"
+                # The create response must carry a renderable screen payload.
+                created = first.json()["investigation"]
+                assert created["frontend_status"] == "gathering"
+                assert [m["role"] for m in created["messages"]] == ["user", "assistant"]
 
                 investigation_id = first.json()["investigation_id"]
                 second = await client.post(
                     f"/investigations/{investigation_id}/messages",
                     json={"message": "Example University in UK, ABC Education Consultants asks for 500000 PKR."},
+                    headers=headers,
                 )
                 assert second.status_code == 200
                 assert second.json()["ready_for_verification"] is True
 
                 evidence = await client.post(
                     f"/investigations/{investigation_id}/evidence",
-                    data={"text": "Send 500000 PKR on Easypaisa today for 100% visa guarantee."},
+                    data={"text": "Send 500000 PKR on Easypaisa today for 100% visa guarantee.", "label": "WhatsApp demand"},
+                    headers=headers,
                 )
                 assert evidence.status_code == 200
                 assert evidence.json()["evidence_type"] == "text"
+                assert evidence.json()["attachment"]["label"] == "WhatsApp demand"
+                assert evidence.json()["summary"]
 
-                verify = await client.post(f"/investigations/{investigation_id}/verify")
+                verify = await client.post(f"/investigations/{investigation_id}/verify", headers=headers)
                 assert verify.status_code == 200
                 verify_data = verify.json()
                 assert verify_data["status"] == "completed"
@@ -144,15 +157,52 @@ def test_full_mocked_pipeline(tmp_path, monkeypatch):
                 assert verify_data["display_status"] in {"SUSPICIOUS", "HIGH_RISK"}
                 assert verify_data["display_emoji"] in {"🟠", "🔴"}
 
-                report = await client.get(f"/investigations/{investigation_id}/results")
+                report = await client.get(f"/investigations/{investigation_id}/results", headers=headers)
                 assert report.status_code == 200
                 report_data = report.json()
                 assert report_data["status"] == "completed"
                 assert len(report_data["report"]["domains"]) == 4
                 assert all("evidence" in d for d in report_data["report"]["domains"])
                 assert all(isinstance(item, dict) for item in report_data["report"]["manual_checks"])
+                # results doubles as the reload payload for the frontend screen
+                assert report_data["investigation"]["frontend_status"] == "assessed"
+                assert report_data["investigation"]["overall_risk"] == "high"
+                assert len(report_data["investigation"]["evidence"]) == 1
 
-                idempotent = await client.post(f"/investigations/{investigation_id}/verify")
+                listed = await client.get("/investigations", headers=headers)
+                assert listed.status_code == 200
+                items = listed.json()["investigations"]
+                assert len(items) == 1
+                assert items[0]["status"] == "assessed"
+                assert items[0]["message_count"] == 4
+
+                other_student = await client.get("/investigations", headers={"X-Student-Key": "someone_else"})
+                assert other_student.json()["investigations"] == []
+                forbidden = await client.get(f"/investigations/{investigation_id}", headers={"X-Student-Key": "someone_else"})
+                assert forbidden.status_code == 404
+
+                edited = await client.post(
+                    f"/investigations/{investigation_id}/context",
+                    json={"updates": {"program": "MSc Data Science", "degree_level": "MS"}},
+                    headers=headers,
+                )
+                assert edited.status_code == 200
+                assert edited.json()["needs_verification"] is True
+                assert edited.json()["investigation"]["needs_reverification"] is True
+                assert "MSc Data Science" in edited.json()["student_message"]["text"]
+
+                records = await client.get(f"/investigations/{investigation_id}/evidence-records", headers=headers)
+                assert records.status_code == 200
+                assert len(records.json()["records"]) >= 5
+
+                closed_chat = await client.post(
+                    f"/investigations/{investigation_id}/messages",
+                    json={"message": "one more thing"},
+                    headers=headers,
+                )
+                assert closed_chat.status_code == 409
+
+                idempotent = await client.post(f"/investigations/{investigation_id}/verify", headers=headers)
                 assert idempotent.status_code == 200
                 assert idempotent.json()["evidence_count"] == verify_data["evidence_count"]
         finally:

@@ -37,5 +37,7 @@ async def screen_entity(name: str, country: str | None = None) -> dict:
                 ],
             }
     except Exception as exc:
-        logger.warning("OpenSanctions screening failed for entity=%s: %s", name, exc, exc_info=True)
+        # A slow or unreachable external source is expected sometimes; the domain
+        # is reported as unable_to_verify instead of raising.
+        logger.warning("OpenSanctions screening failed for entity=%s: %s", name, exc)
         return {"error": str(exc), "query": name, "results": []}

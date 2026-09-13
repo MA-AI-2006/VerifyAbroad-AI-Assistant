@@ -1,7 +1,5 @@
-import { eq } from "drizzle-orm";
-
-import { db } from "@/db";
-import { ensureSeeded } from "@/db/seed";
+import { databaseConfigured, db } from "@/db";
+import { buildReferenceData, type ReferenceData } from "@/server/referenceData";
 import {
   agents,
   communityReports,
@@ -12,12 +10,12 @@ import {
 } from "@/db/schema";
 import { normalize } from "@/server/engine/extract";
 
-type UniversityRow = typeof universities.$inferSelect;
-type ProgramRow = typeof programs.$inferSelect;
-type AgentRow = typeof agents.$inferSelect;
-type ScholarshipRow = typeof scholarships.$inferSelect;
-type CommunityRow = typeof communityReports.$inferSelect;
-type ChannelRow = typeof officialChannels.$inferSelect;
+type UniversityRow = ReferenceData["universities"][number];
+type ProgramRow = ReferenceData["programs"][number];
+type AgentRow = ReferenceData["agents"][number];
+type ScholarshipRow = ReferenceData["scholarships"][number];
+type CommunityRow = ReferenceData["community"][number];
+type ChannelRow = ReferenceData["channels"][number];
 
 export interface Match<T> {
   row: T;
@@ -52,25 +50,44 @@ function bestMatch<T>(norm: string, rows: T[], getAliases: (row: T) => string[])
   return fallback ?? null;
 }
 
-export async function loadVerificationData() {
-  await ensureSeeded();
-  const [universityRows, programRows, agentRows, scholarshipRows, communityRows, channelRows] =
-    await Promise.all([
-      db.select().from(universities),
-      db.select().from(programs),
-      db.select().from(agents),
-      db.select().from(scholarships),
-      db.select().from(communityReports),
-      db.select().from(officialChannels),
-    ]);
-  return {
-    universities: universityRows,
-    programs: programRows,
-    agents: agentRows,
-    scholarships: scholarshipRows,
-    community: communityRows,
-    channels: channelRows,
-  };
+/**
+ * Reference rows for every lookup the engine and the directory pages make.
+ *
+ * The curated seed dataset (`src/data/seed/verificationData.ts`) is the source of
+ * truth; Postgres is only a cache of it. So with no DATABASE_URL — the deployed
+ * Vercel shape — or a DB that is empty/unreachable, the same data is served from
+ * memory and the feature set is unchanged. Lookup quality must never depend on
+ * infrastructure.
+ */
+export async function loadVerificationData(): Promise<ReferenceData> {
+  const fallback = buildReferenceData();
+  if (!databaseConfigured()) return fallback;
+
+  try {
+    const { ensureSeeded } = await import("@/db/seed");
+    await ensureSeeded();
+    const [universityRows, programRows, agentRows, scholarshipRows, communityRows, channelRows] =
+      await Promise.all([
+        db.select().from(universities),
+        db.select().from(programs),
+        db.select().from(agents),
+        db.select().from(scholarships),
+        db.select().from(communityReports),
+        db.select().from(officialChannels),
+      ]);
+    if (universityRows.length === 0) return fallback;
+    return {
+      universities: universityRows as unknown as ReferenceData["universities"],
+      programs: programRows as unknown as ReferenceData["programs"],
+      agents: agentRows as unknown as ReferenceData["agents"],
+      scholarships: scholarshipRows as unknown as ReferenceData["scholarships"],
+      community: communityRows as unknown as ReferenceData["community"],
+      channels: channelRows as unknown as ReferenceData["channels"],
+    };
+  } catch (error) {
+    console.warn("[verification] database unavailable, serving the seed dataset instead", error);
+    return fallback;
+  }
 }
 
 export function matchUniversity(
@@ -151,19 +168,14 @@ export function matchChannels(
 
 /** Lookups used by the standalone lookup endpoints. */
 export async function findUniversityByName(name: string) {
-  await ensureSeeded();
-  const data = await loadVerificationData();
-  return matchUniversity(data, name);
+  return matchUniversity(await loadVerificationData(), name);
 }
 
 export async function findScholarshipByName(name: string) {
-  await ensureSeeded();
-  const data = await loadVerificationData();
-  return matchScholarship(data, name);
+  return matchScholarship(await loadVerificationData(), name);
 }
 
 export async function findAgentByName(name: string) {
-  await ensureSeeded();
   const data = await loadVerificationData();
   const match = matchAgent(data, name);
   if (match) {
@@ -174,6 +186,6 @@ export async function findAgentByName(name: string) {
 }
 
 export async function listUniversities() {
-  await ensureSeeded();
-  return db.select().from(universities).where(eq(universities.acceptsDirectApplications, true));
+  const data = await loadVerificationData();
+  return data.universities.filter((row) => row.acceptsDirectApplications === true);
 }

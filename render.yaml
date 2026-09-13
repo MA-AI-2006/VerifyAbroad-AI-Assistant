@@ -1,0 +1,81 @@
+# Render Blueprint for the VerifyAbroad-AI backend (monorepo: backend/ only).
+#
+# In Render: New -> Blueprint -> connect this repo. Render reads this file, so
+# there is no dashboard form to fill except the secrets marked `sync: false`
+# (paste those in the dashboard) and the two placeholders noted below.
+#
+# Native Python runtime (not Docker) is deliberate: it is the fastest, smallest
+# build and works on Render's Free instance (512 MB, no persistent disk).
+# A Dockerfile is included for `runtime: docker` on a paid plan or any other host.
+services:
+  - type: web
+    name: verifyabroad-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    # Closest Render region to Pakistan; change to oregon/virginia if you prefer.
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    # $PORT is injected by Render. 0.0.0.0 is mandatory (not 127.0.0.1).
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers
+    # /ping has no third-party dependency, so a flaky Tavily/Hipo answer cannot
+    # make Render restart a working API in the middle of a demo.
+    healthCheckPath: /ping
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      # Creates any missing table on boot — enough for a fresh Supabase database.
+      # Set false (and run `alembic upgrade head`) if you want migrations to be
+      # the only schema authority.
+      - key: AUTO_CREATE_DB
+        value: "true"
+      - key: LOG_LEVEL
+        value: INFO
+      # --- Database: Supabase / Neon Postgres ---
+      # Use the connection pooler URI. Both the session (5432) and transaction
+      # (6543) poolers work: asyncpg + SSL + statement_cache_size=0 are applied.
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SSLMODE
+        value: require
+      # --- Providers (paste in the Render dashboard, never commit them) ---
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: OPENSANCTIONS_API_KEY
+        sync: false
+      # Model ids stay in env so a provider deprecation is a config change, not a redeploy.
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GROQ_MODEL
+        value: qwen/qwen3.6-27b
+      - key: TAVILY_MAX_RESULTS
+        value: "3"
+      # Keep true: with a missing key or a provider outage the investigator and
+      # the report narrative fall back to deterministic extraction instead of 502ing.
+      - key: OFFLINE_FALLBACKS
+        value: "true"
+      - key: INGEST_SEED_ON_STARTUP
+        value: "true"
+      # Local uploads survive a request but not a redeploy on Free instances
+      # (no persistent disk). Extracted evidence lives in Postgres, so no
+      # feature depends on the file bytes. Switch to `supabase` + the bucket
+      # vars below if you want the originals retained.
+      - key: STORAGE_BACKEND
+        value: local
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: evidence-files
+      # Only matters if a browser calls this API directly (the Next.js server
+      # does not). RENDER_PLACEHOLDER: your Vercel origin when you want that.
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: APP_SECRET
+        sync: false

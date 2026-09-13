@@ -1,96 +1,151 @@
-# VerifyAbroad-AI — frontend + backend, connected
+# VerifyAbroad-AI
 
-## ⚠️ Do this first: rotate your API keys
+An investigation assistant for students who are about to pay a "consultant" or
+sign an offer letter they cannot verify. You describe the situation (English,
+Roman Urdu or اردو), attach the evidence — offer letter, WhatsApp screenshot,
+payment demand, agent website — and the app cross-checks every claim against
+independent sources, then produces an evidence tree plus a conservative risk
+report.
 
-Your uploaded backend zip had a `.env` file with **live** Gemini, Groq, Tavily,
-and OpenSanctions API keys in it. I removed that file from this package (only
-the placeholder `.env.example` is included), but since the real keys were
-shared in this chat, treat them as compromised and **generate new ones** from
-each provider before deploying anywhere.
+Two deployables, one contract between them:
 
-## What changed
+| Piece | Stack | Deploy to | Owns |
+| --- | --- | --- | --- |
+| `frontend/` | Next.js 16 (App Router), React 19 | **Vercel** | UI, session cookie, reference directory pages |
+| `backend/` | FastAPI + async SQLAlchemy | **Render** | chat agent, evidence parsing, verification, risk scoring, accounts, profile, history |
 
-Your Python/FastAPI backend (`backend/`) and your Next.js frontend
-(`frontend/`) speak completely different API contracts — the backend has no
-auth, no university/scholarship lookup, and a different investigation
-workflow (create → chat → **explicit verify step** → results) than the
-frontend's built-in engine (which scores risk continuously on every message).
-So this isn't a config toggle — it's a real adapter layer.
-
-I added, on the **frontend** side only (the backend is untouched, just
-cleaned of `__pycache__`/`app.db`/secrets):
-
-- `frontend/src/server/backendClient.ts` — server-only HTTP client for the
-  real backend routes (`/investigations`, `/investigations/{id}/messages`,
-  `/investigations/{id}/evidence`, `/investigations/{id}/verify`,
-  `/investigations/{id}/results`).
-- `frontend/src/server/backendAdapter.ts` — maps the backend's flatter risk
-  report (`risk_score`, `risk_level`, per-domain evidence) into the
-  frontend's richer `InvestigationResult` shape. Fields the backend has no
-  equivalent for (funding type, scholarship findings, community signals,
-  progress steps) are left empty rather than invented.
-- Updated route handlers — `/api/investigate`, `/api/investigation/[id]`,
-  `/api/investigation/[id]/message`, `/api/evidence` — each now checks
-  `backendEnabled()` first and proxies to the real backend when it's on,
-  falling back to the untouched internal engine when it's off. **Nothing
-  changes in internal-engine mode** — this is purely additive.
-- Two new routes with no internal-engine equivalent:
-  `/api/investigation/[id]/verify` (POST) and `/api/investigation/[id]/results`
-  (GET), since the backend's risk scoring is a separate step, not part of
-  every chat turn.
-- `src/services/api.ts` gained `runVerification()` and `getExternalResults()`
-  so UI code can trigger that step.
-
-## Known gaps (be aware, not silently papered over)
-
-- **No chat history from the backend.** `GET /investigations/{id}/results`
-  only returns the structured case + report, not message history, so
-  `investigation.messages` comes back empty when you reload a backend-mode
-  investigation. Track the transcript client-side as messages arrive, or add
-  a `GET /investigations/{id}` endpoint to the backend if you need reload
-  support.
-- **Auth, profile, emergency protocols, demo case, and university/
-  scholarship/agent lookup still only exist in the internal engine** — the
-  Python backend has no equivalent routes at all, so those `/api/*` routes
-  were left exactly as they were.
-- **The backend's own verification data is still placeholder-empty**
-  (`data/hec_recognized.json`, `data/banned_agents.json` are empty lists) —
-  connecting it doesn't add real fraud/sanctions data, just the machinery to
-  use it once you populate those files.
-- I could not run either server in this environment (no network egress here),
-  so this is unverified end-to-end — see the checklist below.
-
-## Running it
-
-**Backend:**
-```bash
-cd backend
-cp .env.example .env   # fill in fresh (rotated) API keys
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+```
+browser ──▶ Vercel (Next.js) ──▶ Render (FastAPI) ──▶ Supabase / Neon Postgres
+             /api/*  route handlers   BACKEND_URL          DATABASE_URL
+             httpOnly cookie ──▶ X-Student-Key
 ```
 
-**Frontend:**
+The browser **never** talks to Render. Every request goes to the Next.js
+`/api` handlers, which forward it server-to-server with the student key in
+`X-Student-Key`. That is why no CORS allowlist, no cross-site cookie and no
+public API key are needed anywhere — and why the same code runs unchanged with
+the backend switched off.
+
+---
+
+## Deploy in ~15 minutes
+
+### 1. Backend → Render
+
+`render.yaml` at the repo root is the whole blueprint (Python runtime,
+`rootDir: backend`, `uvicorn main:app`, health check on `/ping`, free tier,
+`singapore` region).
+
+1. Push this repo to GitHub and choose **New → Blueprint** in Render.
+2. Open the new service's **Environment** tab and fill in the secrets marked
+   `sync: false` in `render.yaml` (they are never stored in git):
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | Postgres URI from Supabase or Neon (`postgresql://…?sslmode=require`) |
+   | `GEMINI_API_KEY` | enables live narratives + multimodal PDF/image reading |
+   | `GROQ_API_KEY` | structured-output fallback when Gemini fails |
+   | `TAVILY_API_KEY` | optional — enables live web research |
+   | `ALLOWED_ORIGINS` | optional — the Next.js server calls this API server-to-server, so CORS is not used. Set it (comma-separated) only if a browser will ever call Render directly. |
+
+3. Deploy, then open `https://<service>.onrender.com/health?detailed=true`.
+   `{"status":"ok"}` with `checks.database.status == "ok"` means it is ready.
+   `GET /` also reports `"mode": "live_providers"` vs `"deterministic_fallback"`.
+
+**No keys, no Postgres? It still deploys.** SQLite is used when `DATABASE_URL`
+is unset, and every LLM step falls back to the deterministic extractor — the
+risk score, evidence tree and fraud signals are computed by rules either way,
+never by a model's guess. (Render's free tier has no persistent disk, so
+uploaded *file bytes* are not kept; the extracted claims are stored in
+Postgres, which is what the report uses. Set `SUPABASE_URL` +
+`SUPABASE_SERVICE_KEY` (+ `SUPABASE_BUCKET`) to store the originals in a bucket
+instead.)
+
+### 2. Frontend → Vercel
+
+1. **Import the repo**, then set **Root Directory = `frontend/`**. (This is a
+   Vercel project *setting*, not something `vercel.json` can choose.)
+2. Environment variables:
+
+   | Variable | Value |
+   | --- | --- |
+   | `BACKEND_URL` | `https://<service>.onrender.com` |
+   | `BACKEND_FALLBACK` | `internal` (optional — see below) |
+   | `DATABASE_URL` | only if you want the built-in engine as the fallback |
+
+3. Deploy. With `BACKEND_URL` set, the frontend needs no database of its own.
+
+`BACKEND_FALLBACK=internal` makes a dead/unreachable backend downgrade to the
+bundled engine instead of erroring — useful on a demo day, because Render's free
+instances sleep after 15 idle minutes. Without it the user sees
+"the service is waking up, try again in ~30 seconds", which is honest and costs
+nothing. The frontend still needs `DATABASE_URL` for that path to hold data.
+
+---
+
+## Local development
+
 ```bash
+# backend
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # optional: keys / DATABASE_URL
+uvicorn main:app --port 8000
+pytest -q                     # 10 passed, no keys required
+
+# frontend (separate terminal)
 cd frontend
-cp .env.example .env
-# set BACKEND_URL=http://localhost:8000 in .env to use the real backend,
-# or leave it blank to keep using the internal engine
+cp .env.example .env          # BACKEND_URL=http://localhost:8000
 npm install
 npm run dev
 ```
 
-Visit `http://localhost:8000/health` first — it checks DB connectivity and
-which provider keys are configured, which will tell you fast if the backend
-itself is ready before you point the frontend at it.
+Leave `BACKEND_URL` empty to run the frontend alone on its internal engine; set
+it to hand every stateful feature to FastAPI. Both modes expose the same
+`/api` contract, so no UI code knows the difference.
 
-## Checklist before you trust this in a demo
+---
 
-- [ ] Rotate the four leaked API keys (see top of this file)
-- [ ] `backend/.env` has fresh keys and a real `DATABASE_URL` if not using SQLite
-- [ ] `ALLOWED_ORIGINS` in backend `.env` includes your actual frontend URL
-- [ ] `BACKEND_URL` in frontend `.env` points at the running backend
-- [ ] Walk through: start investigation → send a message → upload evidence →
-      call verify → check `/api/investigation/[id]/results` — watch the
-      terminal running `uvicorn` for errors at each step
+## Where each feature lives
+
+| Feature | Backend mode (`BACKEND_URL` set) | Internal mode |
+| --- | --- | --- |
+| Chat / case building | `POST /investigations`, `POST /investigations/{id}/messages` | `src/server/engine/*` |
+| Evidence (file, pasted text, link) | `POST /investigations/{id}/evidence` (+ PyMuPDF/LLM parsing) | metadata + deterministic re-score |
+| Verification + risk report | `POST /investigations/{id}/verify` → `GET …/results` | scored on every turn |
+| History | `GET /investigations` | `src/server/repositories` |
+| Accounts, profile | `/auth/signup`, `/auth/login`, `/students/me/profile` | same repositories |
+| University / scholarship / consultant directories | `src/server/referenceData.ts` (bundled) | same |
+| Guides, demo case, emergency contacts | static data in the frontend | static data |
+
+Directory browsing is deliberately *not* routed through the backend: the
+reference dataset ships with the frontend, so `/universities`,
+`/scholarships` and `/consultants` work with zero provisioning.
+
+### Verification UI
+
+In backend mode the header gains a **Run verification** button
+(`components/Chat/ChatView.tsx`). It calls `/api/investigation/{id}/verify`,
+and after a profile edit the button becomes **Re-run verification** because the
+backend marks the old report stale (`needs_reverification`). Verification is
+idempotent: calling it again returns the stored report unless `force` is set.
+
+---
+
+## Honest limitations
+
+- **Nothing is ever reported as "safe".** A university not found in the
+  backend's data means *no source could be consulted*, not *fake* — the report
+  says so in its data notes, and the manual checks (WHED, SECP) stay in the
+  report for that reason.
+- `data/hec_recognized.json` and `data/banned_agents.json` in `backend/` are
+  empty placeholders, so no HEC or banned-agent match can ever be asserted.
+  Populate them (or set `TAVILY_API_KEY` for live research) for real coverage.
+- `narrative_source` in every report says whether the prose was written by a
+  model or composed from rule output. Scores never depend on it.
+- Long verifications are capped at 58 s of frontend budget to stay inside
+  Vercel's 60 s function limit; if that cuts the request, the backend finishes
+  anyway and the next page load reads the stored report.
+- A `backend/.env` with live keys was present in the original upload. It is not
+  in this repo — and those keys should still be rotated at each provider.

@@ -39,6 +39,9 @@ class EvidenceUploadResponse(BaseModel):
     evidence_id: str
     evidence_type: str
     extracted_data: dict
+    #: Attachment shape the frontend chat/evidence panel renders directly.
+    attachment: dict | None = None
+    summary: str | None = None
 
 
 class ExtractedDocumentClaims(BaseModel):
@@ -56,3 +59,24 @@ class ExtractedDocumentClaims(BaseModel):
     payment_url: str | None = Field(default=None, max_length=2000)
     intake: str | None = Field(default=None, max_length=200)
     issue_date: str | None = Field(default=None, max_length=200)
+
+    def summary(self) -> str:
+        """Short, honest read-out of what could actually be extracted."""
+        found = []
+        if self.university:
+            found.append(f"university: {self.university}")
+        if self.program:
+            found.append(f"program: {self.program}")
+        if self.agent_name:
+            found.append(f"consultant: {self.agent_name}")
+        if self.payment_amount is not None:
+            found.append(f"amount: {self.payment_amount} {self.currency or ''}".strip())
+        if self.payment_method:
+            found.append(f"payment method: {self.payment_method}")
+        if self.payment_deadline:
+            found.append(f"deadline: {self.payment_deadline}")
+        if self.claims:
+            found.append(f"{len(self.claims)} promise/claim(s) noted")
+        if not found:
+            return "No structured fields could be read from this evidence yet — verification will treat it as unconfirmed."
+        return "Extracted " + "; ".join(found) + "."

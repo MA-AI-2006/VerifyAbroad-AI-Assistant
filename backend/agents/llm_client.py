@@ -24,6 +24,20 @@ EMBEDDING_MODEL = settings.gemini_embedding_model
 GROQ_MODEL = settings.groq_model
 
 
+class LLMUnavailable(RuntimeError):
+    """No provider key is configured.
+
+    Raised before any network attempt so callers can degrade to their
+    deterministic fallback without a traceback storm in the deploy logs — a
+    keyless deployment is a supported mode, not an error.
+    """
+
+
+def _require_provider() -> None:
+    if not settings.llm_available:
+        raise LLMUnavailable("No LLM provider key is configured (GEMINI_API_KEY or GROQ_API_KEY)")
+
+
 class LLMClient:
     async def _gemini(self, contents, config=None):
         if not _gemini:
@@ -76,6 +90,7 @@ class LLMClient:
         return groq_strict_schema(schema)
 
     async def generate_text(self, system: str, user: str) -> str:
+        _require_provider()
         try:
             response = await self._gemini(
                 f"SYSTEM:\n{system}\n\nUSER:\n{user}",
@@ -83,7 +98,7 @@ class LLMClient:
             )
             return response.text or ""
         except Exception as gemini_exc:
-            logger.warning("Gemini text generation failed; using Groq fallback: %s", gemini_exc, exc_info=True)
+            logger.warning("Gemini text generation failed; using Groq fallback: %s", gemini_exc, exc_info=_groq is not None)
             try:
                 return await self._groq([
                     {"role": "system", "content": system},
@@ -94,6 +109,7 @@ class LLMClient:
                 raise RuntimeError("All configured LLM providers failed for text generation") from groq_exc
 
     async def generate_json(self, system: str, user: str, schema: Type[T]) -> T:
+        _require_provider()
         schema_json = schema.model_json_schema()
         try:
             response = await self._gemini(
@@ -102,7 +118,7 @@ class LLMClient:
             )
             return schema.model_validate_json(response.text)
         except Exception as gemini_exc:
-            logger.warning("Gemini structured generation failed; using Groq fallback: %s", gemini_exc, exc_info=True)
+            logger.warning("Gemini structured generation failed; using Groq fallback: %s", gemini_exc, exc_info=_groq is not None)
             try:
                 raw = await self._groq(
                     [
@@ -135,6 +151,7 @@ class LLMClient:
     async def generate_multimodal_json(
         self, system: str, user: str, data: bytes, mime_type: str, schema: Type[T]
     ) -> T:
+        _require_provider()
         part = types.Part.from_bytes(data=data, mime_type=mime_type)
         try:
             response = await self._gemini(
@@ -143,7 +160,7 @@ class LLMClient:
             )
             return schema.model_validate_json(response.text)
         except Exception as gemini_exc:
-            logger.warning("Gemini multimodal extraction failed; using Groq fallback: %s", gemini_exc, exc_info=True)
+            logger.warning("Gemini multimodal extraction failed; using Groq fallback: %s", gemini_exc, exc_info=_groq is not None)
 
         try:
             if mime_type == "application/pdf":
