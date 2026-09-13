@@ -46,7 +46,7 @@ the backend switched off.
    | `GEMINI_API_KEY` | enables live narratives + multimodal PDF/image reading |
    | `GROQ_API_KEY` | structured-output fallback when Gemini fails |
    | `TAVILY_API_KEY` | optional — enables live web research |
-   | `ALLOWED_ORIGINS` | `https://your-app.vercel.app` (comma-separated list) |
+   | `ALLOWED_ORIGINS` | optional — the Next.js server calls this API server-to-server, so CORS is not used. Set it (comma-separated) only if a browser will ever call Render directly. |
 
 3. Deploy, then open `https://<service>.onrender.com/health?detailed=true`.
    `{"status":"ok"}` with `checks.database.status == "ok"` means it is ready.
@@ -57,8 +57,9 @@ is unset, and every LLM step falls back to the deterministic extractor — the
 risk score, evidence tree and fraud signals are computed by rules either way,
 never by a model's guess. (Render's free tier has no persistent disk, so
 uploaded *file bytes* are not kept; the extracted claims are stored in
-Postgres, which is what the report uses. Point `SUPABASE_URL` +
-`SUPABASE_SERVICE_ROLE_KEY` at a bucket if you want the files too.)
+Postgres, which is what the report uses. Set `SUPABASE_URL` +
+`SUPABASE_SERVICE_KEY` (+ `SUPABASE_BUCKET`) to store the originals in a bucket
+instead.)
 
 ### 2. Frontend → Vercel
 
