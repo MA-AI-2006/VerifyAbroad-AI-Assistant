@@ -3,8 +3,7 @@ import { Info, Lock, UserRound } from "lucide-react";
 
 import { ProfileForm } from "@/components/Profile/ProfileForm";
 import { Card } from "@/components/ui/primitives";
-import { getStudentProfile } from "@/server/repositories/investigations";
-import { getStudentKey } from "@/server/session";
+import { loadProfile } from "@/server/dataSource";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ProfilePage() {
-  const studentKey = await getStudentKey();
-  const profile = await getStudentProfile(studentKey).catch(() => ({
+  const profile = await loadProfile().catch(() => ({
     name: "",
     preferred_language: "roman_urdu" as const,
     degree_level: null,

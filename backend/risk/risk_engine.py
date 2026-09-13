@@ -9,6 +9,11 @@ RULES = {
     "personal_payment_account": 20,
     "institution_not_recognized": 25,
     "payment_process_mismatch": 25,
+    # A contradicted payment demand is the highest-stakes finding in this whole
+    # product, so it floors the score at MEDIUM even when nothing else was
+    # checkable yet (no documents, no registry hit) — the student must never see
+    # "Low risk" while an official source contradicts what they were told to pay.
+    "payment_contradicted": 30,
     "contradicted_program": 30,
     "contradictory_document": 20,
     "agent_banned_or_sanctioned": 35,
@@ -40,6 +45,8 @@ def compute_risk_score(records: list[EvidenceRecord], domain_statuses: dict[str,
         score += RULES["unverified_agent"]
 
     payment_status = domain_statuses.get("payment", (None,))[0]
+    if payment_status == "CONTRADICTED":
+        score += RULES["payment_contradicted"]
     if payment_status == "CONTRADICTED" and any(
         _contains((r.claim + " " + (r.detail or "")).lower(), _PAYMENT_ACCOUNT_PATTERNS)
         for r in records if r.domain.value == "payment"

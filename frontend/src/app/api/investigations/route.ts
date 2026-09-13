@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 
-import { listInvestigations } from "@/server/repositories/investigations";
-import { getStudentKey } from "@/server/session";
+import { currentMode, loadHistory, toResponse } from "@/server/dataSource";
 
 export const dynamic = "force-dynamic";
 
+/** Investigation history for the signed-in student (or the anonymous session). */
 export async function GET() {
-  const studentKey = await getStudentKey();
-  const items = await listInvestigations(studentKey);
-  return NextResponse.json({ investigations: items });
+  try {
+    return NextResponse.json({
+      investigations: await loadHistory(),
+      mode: await currentMode(),
+    });
+  } catch (error) {
+    return toResponse(error, "Could not load your investigations");
+  }
 }

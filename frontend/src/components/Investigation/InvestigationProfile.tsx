@@ -99,6 +99,7 @@ export function InvestigationProfile({
   investigationId,
   result,
   onTurn,
+  onContextEdited,
   onSubmitFreeText,
 }: {
   investigationId: string | null;
@@ -108,6 +109,8 @@ export function InvestigationProfile({
     assistantMessage: ChatMessage;
     result: InvestigationResult | null;
   }) => void;
+  /** A profile edit makes any existing report stale in backend mode. */
+  onContextEdited?: () => void;
   /**
    * Used for information that is not a structured profile field (a claim the
    * student remembers, or other context). It goes through the same AI engine as
@@ -181,6 +184,7 @@ export function InvestigationProfile({
         window.setTimeout(() => setSaved(null), 2200);
       }
       onTurn(response);
+      if (response.needs_verification) onContextEdited?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not update the profile");
     } finally {

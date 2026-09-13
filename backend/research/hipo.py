@@ -18,5 +18,7 @@ async def search_university(name: str, country: str | None = None) -> dict:
             payload = response.json()
             return {"query": name, "country": country, "matches": payload if isinstance(payload, list) else []}
     except Exception as exc:
-        logger.warning("Hipo lookup failed for university=%s: %s", name, exc, exc_info=True)
+        # A third-party registry being slow or unreachable is an expected
+        # condition, not a bug: the domain is reported as unable_to_verify.
+        logger.warning("Hipo lookup failed for university=%s: %s", name, exc)
         return {"error": str(exc), "query": name, "country": country, "matches": []}

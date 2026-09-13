@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { ChatView } from "@/components/Chat/ChatView";
-import { getInvestigation } from "@/server/repositories/investigations";
+import { loadScreen } from "@/server/dataSource";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,8 @@ export default async function InvestigatePage({
   searchParams: Promise<{ id?: string }>;
 }) {
   const { id } = await searchParams;
-  const investigation = id ? await getInvestigation(Number(id)).catch(() => null) : null;
+  // Ids are opaque (UUIDs from the backend, numeric in the internal engine), so
+  // they are passed through as strings and resolved by the data seam.
+  const investigation = id ? await loadScreen(id).catch(() => null) : null;
   return <ChatView initialInvestigation={investigation} />;
 }

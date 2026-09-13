@@ -23,7 +23,9 @@ async def search_web(query: str, max_results: int | None = None) -> dict:
             timeout=settings.web_timeout_seconds,
         )
     except Exception as exc:
-        logger.warning("Tavily research failed for query=%s: %s", query, exc, exc_info=True)
+        # A slow or unreachable external source is expected sometimes; the domain
+        # is reported as unable_to_verify instead of raising.
+        logger.warning("Tavily research failed for query=%s: %s", query, exc)
         return {"error": str(exc), "query": query, "results": []}
 
 

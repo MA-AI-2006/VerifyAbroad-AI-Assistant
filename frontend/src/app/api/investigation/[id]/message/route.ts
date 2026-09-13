@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
 import type { ChatAttachment, DegreeLevel, FundingType } from "@/types";
-import { runInvestigationTurn } from "@/server/engine/run";
-import { backendEnabled, backendContinueInvestigation } from "@/server/backendClient";
-import { adaptAssistantMessage } from "@/server/backendAdapter";
+import { currentMode, sendTurn, toResponse } from "@/server/dataSource";
 
 export const dynamic = "force-dynamic";
+/** Vercel's default serverless budget is shorter than a live verification run. */
+export const maxDuration = 60;
+
 
 interface MessageBody {
   message?: string;
@@ -14,44 +15,37 @@ interface MessageBody {
   funding_type?: FundingType | null;
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+/** One chat turn. The backend scores nothing here; the internal engine still does. */
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
     const body = (await request.json().catch(() => ({}))) as MessageBody;
     const text = (body.message ?? "").trim();
     const attachments = body.attachments ?? [];
     if (!text && attachments.length === 0) {
-      return NextResponse.json({ error: "Message or evidence is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Message or evidence is required" },
+        { status: 400 },
+      );
     }
 
-    // Backend investigation ids are opaque strings (see database/models.py),
-    // not the numeric ids the internal engine uses — do not coerce with Number().
-    if (backendEnabled()) {
-      const backendResult = await backendContinueInvestigation(id, text);
-      const assistantMessage = adaptAssistantMessage(backendResult.assistant_message, null);
-      return NextResponse.json({
-        assistantMessage,
-        result: null,
-        mode: "external_backend",
-      });
-    }
-
-    const investigationId = Number(id);
-    if (!Number.isFinite(investigationId)) {
-      return NextResponse.json({ error: "Invalid investigation id" }, { status: 400 });
-    }
-
-    const turn = await runInvestigationTurn({
-      investigationId,
-      studentText: text,
+    const turn = await sendTurn(id, {
+      message: text,
       attachments,
-      explicitDegree: body.degree_level ?? null,
-      explicitFunding: body.funding_type ?? null,
+      degreeLevel: body.degree_level ?? null,
+      fundingType: body.funding_type ?? null,
     });
 
-    return NextResponse.json({ ...turn, mode: "internal_engine" });
+    return NextResponse.json({
+      assistantMessage: turn.assistantMessage,
+      result: turn.result,
+      investigation: turn.investigation,
+      mode: await currentMode(),
+    });
   } catch (error) {
-    console.error("message turn failed", error);
-    return NextResponse.json({ error: "Failed to process the message" }, { status: 500 });
+    return toResponse(error, "Failed to process the message");
   }
 }

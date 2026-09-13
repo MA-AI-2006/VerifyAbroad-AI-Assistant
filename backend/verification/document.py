@@ -39,8 +39,26 @@ def cross_check_extracted_claims(extracted: dict, case, domain_statuses: dict | 
     ]:
         a, b = extracted.get(field), getattr(case, case_field, None)
         if a and b:
-            same = str(a).strip().lower() == str(b).strip().lower()
-            out.append(EvidenceRecord(domain=domain, claim=f"Evidence {field} matches the investigation case", source="Document-to-case consistency check", source_type="consistency_rule", authority=AuthorityLevel.high, result=VerificationResult.verified if same else VerificationResult.contradicted, detail=f"Evidence={a!r}; case={b!r}."))
+            left, right = str(a).strip().lower(), str(b).strip().lower()
+            same = left == right
+            # Reference codes and letterheads often surround the same name, so a
+            # containment match counts as consistent rather than a contradiction.
+            contained = (not same) and (right in left or left in right)
+            out.append(EvidenceRecord(
+                domain=domain,
+                claim=f"Evidence {field} matches the investigation case",
+                source="Document-to-case consistency check",
+                source_type="consistency_rule",
+                authority=AuthorityLevel.high,
+                result=VerificationResult.contradicted if not (same or contained) else VerificationResult.verified,
+                detail=(
+                    f"Evidence={a!r}; case={b!r}."
+                    if same
+                    else f"Evidence={a!r} contains the case value {b!r}; treated as consistent."
+                    if contained
+                    else f"Evidence={a!r}; case={b!r}. These do not match."
+                ),
+            ))
     a, b = extracted.get("payment_amount"), getattr(case, "payment_amount", None)
     if a is not None and b is not None:
         same = abs(float(a) - float(b)) < 0.01
