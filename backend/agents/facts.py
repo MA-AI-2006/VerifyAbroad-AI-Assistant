@@ -275,6 +275,35 @@ def _titlecase_name(value: str) -> str:
     )
 
 
+# Institutions students name by acronym alone, with no "University"/"College"
+# word in the sentence ("TUM Munich", "admission LUMS se"). Only consulted when
+# the name patterns above find nothing, so a full name in the text always wins.
+# Matching is case-sensitive: "FAST" is an institution, "fast" is not.
+_UNIVERSITY_ALIASES = {
+    "TUM": "Technical University of Munich",
+    "LMU": "Ludwig Maximilian University of Munich",
+    "RWTH": "RWTH Aachen University",
+    "UCL": "University College London",
+    "KCL": "King's College London",
+    "LSE": "London School of Economics and Political Science",
+    "MIT": "Massachusetts Institute of Technology",
+    "LUMS": "Lahore University of Management Sciences",
+    "IBA": "Institute of Business Administration",
+    "NUST": "National University of Sciences and Technology",
+    "GIKI": "Ghulam Ishaq Khan Institute of Engineering Sciences and Technology",
+    "UET": "University of Engineering and Technology",
+    "NED": "NED University of Engineering and Technology",
+    "FAST": "FAST National University of Computer and Emerging Sciences",
+}
+
+
+def _find_alias_university(text: str) -> str | None:
+    for alias, full_name in _UNIVERSITY_ALIASES.items():
+        if re.search(r"(?<![A-Za-z])" + alias + r"(?![a-z])", text):
+            return full_name
+    return None
+
+
 def find_university(text: str) -> str | None:
     """Longest institution-name candidate wins, so 'Technical' is not lost."""
     candidates: list[str] = []
@@ -287,7 +316,7 @@ def find_university(text: str) -> str | None:
             if candidate and _is_plausible_institution(candidate):
                 candidates.append(candidate)
     if not candidates:
-        return None
+        return _find_alias_university(text)
     return max(candidates, key=len)
 
 

@@ -24,6 +24,21 @@ RISK_DISPLAY = {
     "VERY_HIGH": ("HIGH_RISK", "🔴"),
 }
 
+# Claim phrases. The student writes in English, Roman Urdu or Urdu, so both word
+# orders and the transliterated spellings have to be covered: "visa guaranteed
+# hai" and "guaranteed visa" are the same promise, and "aaj hi … warna seat chali
+# jayegi" is the same pressure as "pay today or lose your seat".
+_VISA_GUARANTEE_RE = re.compile(
+    r"visa[^.\n]{0,24}guarante|guarante[^.\n]{0,24}visa|100\s*%\s*visa|visa\s*100\s*%"
+    r"|visa\s*(?:pakka|confirm|sure)",
+    re.IGNORECASE,
+)
+_URGENCY_RE = re.compile(
+    r"urgent|urgency|within\s*24|24\s*hours?|by\s*today|today\s*hi|aaj\s*hi|abhi\s*bhej"
+    r"|jaldi|last\s*(?:seat|batch)|limited\s*seats?|seat\s*(?:chali|cancel)|expiry|deadline",
+    re.IGNORECASE,
+)
+
 _PAYMENT_ACCOUNT_PATTERNS = (
     "jazzcash", "easypaisa", "sadapay", "nayapay", "upaisa", "personal account",
     "personal wallet", "my account", "own account", "personal iban"
@@ -54,9 +69,11 @@ def compute_risk_score(records: list[EvidenceRecord], domain_statuses: dict[str,
         score += RULES["personal_payment_account"]
 
     claim_texts = " ".join(r.claim.lower() + " " + (r.detail or "").lower() for r in records)
-    if _contains(claim_texts, ("visa guarantee", "100% visa", "100 percent visa")):
+    if _VISA_GUARANTEE_RE.search(claim_texts):
         score += RULES["visa_guarantee_claim"]
-    if _contains(claim_texts, ("urgent", "urgency", "artificial urgency", "short/urgent payment deadline")):
+    if _URGENCY_RE.search(claim_texts) or _contains(
+        claim_texts, ("artificial urgency", "short/urgent payment deadline")
+    ):
         score += RULES["urgent_payment"]
 
     if any(
